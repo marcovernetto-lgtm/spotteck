@@ -98,6 +98,8 @@ struct Inner {
     generation: Generation,
     link: Mutex<Option<Link>>,
     library: Library,
+    last_request: Mutex<Option<(String, Option<String>)>>,
+    native_mode: std::sync::atomic::AtomicBool,
 }
 
 impl Engine {
@@ -108,6 +110,12 @@ impl Engine {
             generation: Generation::default(),
             link: Mutex::new(None),
             library: Library::default(),
+            last_request: Mutex::new(None),
+            // Spotify refuses audio keys to librespot on this account: on macOS, drive the
+            // official app from the start instead of waiting for the first failure.
+            native_mode: std::sync::atomic::AtomicBool::new(
+                cfg!(target_os = "macos") && std::path::Path::new("/Applications/Spotify.app").exists(),
+            ),
         }))
     }
 
@@ -348,6 +356,10 @@ impl Engine {
             if !self.0.generation.is_current(epoch) {
                 return;
             }
+            // Spotify.app owns playback: idle librespot events would wipe its state.
+            if self.is_native_mode() {
+                continue;
+            }
             let update = match event {
                 PlayerEvent::TrackChanged { audio_item } => track_update(&audio_item),
                 PlayerEvent::Playing { position_ms, .. } => Update::Playing { position_ms },
@@ -358,7 +370,19 @@ impl Engine {
                 PlayerEvent::Stopped { .. } => Update::Stopped,
                 PlayerEvent::ShuffleChanged { shuffle } => Update::Shuffle(shuffle),
                 PlayerEvent::VolumeChanged { volume } => Update::Volume(volume),
-                PlayerEvent::Unavailable { .. } => Update::Error("Brano non disponibile su Spotify.".into()),
+                PlayerEvent::Unavailable { .. } => {
+                    log::warn!("librespot track unavailable (audio key refused); triggering native Spotify controller fallback");
+                    #[cfg(target_os = "macos")]
+                    {
+                        let last = self.0.last_request.lock().unwrap().clone();
+                        if let Some((ctx, trk)) = last {
+                            if let Ok(()) = self.play_macos_native(&ctx, trk.as_deref()).await {
+                                continue;
+                            }
+                        }
+                    }
+                    Update::Error("Brano non disponibile su Spotify.".into())
+                }
                 _ => continue,
             };
             self.update(epoch, |s| s.apply(update, Instant::now()));
@@ -378,13 +402,101 @@ impl Engine {
         result.map_err(|_| NOT_RESPONDING.to_owned())
     }
 
+    pub fn is_native_mode(&self) -> bool {
+        self.0.native_mode.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub async fn play_macos_native(&self, context: &str, track: Option<&str>) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            use spotteck_core::uri::{playlist_id_of, playlist_uri, track_id_of, track_uri};
+            let ctx_uri = playlist_id_of(context).map(|id| playlist_uri(&id)).unwrap_or_else(|| context.to_string());
+            let mut trk_uri = track.and_then(|t| track_id_of(t).map(|id| track_uri(&id)));
+
+            // Passing `play track <playlist>` without a track URI causes Spotify.app to start
+            // playing at 0:00 for ~0.5s and then jump/restart once its context resolver finishes.
+            // Resolving the entry track URI upfront starts `play track <track> in context <playlist>`
+            // cleanly from 0:00 with zero stutter or restart.
+            if trk_uri.is_none() {
+                let shuffling = self.0.state.lock().unwrap().shuffling;
+                let session = self.0.link.lock().unwrap().as_ref().map(|l| l.session.clone());
+                if let Some(session) = session {
+                    trk_uri = self.0.library.entry_track(&session, &ctx_uri, shuffling).await;
+                }
+            }
+
+            self.0.native_mode.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.0.state.lock().unwrap().context_uri = ctx_uri.clone();
+
+            let engine = self.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::controller::play_uri(&ctx_uri, trk_uri.as_deref())?;
+                engine.sync_macos_state();
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (context, track);
+            Err("Native Spotify fallback is only supported on macOS.".into())
+        }
+    }
+
+    pub fn sync_macos_state(&self) {
+        #[cfg(target_os = "macos")]
+        if let Some(state) = crate::controller::get_state() {
+            let now = Instant::now();
+            let mut st = self.0.state.lock().unwrap();
+            st.readiness = Readiness::Ready;
+            st.active = true;
+            st.playing = state.is_playing;
+            if !state.track.is_empty() {
+                st.track = state.track;
+                st.artist = state.artist;
+                st.album = state.album;
+            }
+            if !state.track_uri.is_empty() {
+                st.track_uri = state.track_uri;
+            }
+            if !state.artwork.is_empty() {
+                st.artwork = state.artwork;
+            }
+            if state.duration_ms > 0 {
+                st.duration_ms = state.duration_ms;
+            }
+            st.set_position(state.position_ms, now);
+            st.shuffling = state.shuffling;
+            st.volume = percent_to_volume(state.volume as f64);
+            st.playback_error = None;
+
+            self.0.config.tap.set_synthetic_active(state.is_playing);
+
+            drop(st);
+            self.notify();
+        }
+    }
+
     /// Plays or pauses here. When another device is playing, playback moves to Spotteck.
     pub fn play_pause(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            crate::controller::play_pause()?;
+            self.sync_macos_state();
+            return Ok(());
+        }
         let link = self.link()?;
         Self::send(if self.active() { link.spirc.play_pause() } else { link.spirc.transfer(None) })
     }
 
     pub fn next(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            crate::controller::next()?;
+            self.sync_macos_state();
+            return Ok(());
+        }
         let link = self.link()?;
         if !self.active() {
             return Err(NOTHING_PLAYING.into());
@@ -393,6 +505,12 @@ impl Engine {
     }
 
     pub fn prev(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            crate::controller::prev()?;
+            self.sync_macos_state();
+            return Ok(());
+        }
         let link = self.link()?;
         if !self.active() {
             return Err(NOTHING_PLAYING.into());
@@ -401,6 +519,13 @@ impl Engine {
     }
 
     pub fn seek(&self, seconds: f64) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            let s = if seconds.is_finite() { seconds.max(0.0) as u32 } else { 0 };
+            crate::controller::seek(s)?;
+            self.sync_macos_state();
+            return Ok(());
+        }
         let link = self.link()?;
         if !self.active() {
             return Err(NOTHING_PLAYING.into());
@@ -413,6 +538,15 @@ impl Engine {
 
     /// 0–100. Works before anything plays, so playback starts at the chosen level.
     pub fn set_volume(&self, percent: f64) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            let v = percent.clamp(0.0, 100.0).round() as u8;
+            crate::controller::set_volume(v)?;
+            let volume = percent_to_volume(percent);
+            self.0.state.lock().unwrap().volume = volume;
+            self.notify();
+            return Ok(());
+        }
         let link = self.link()?;
         let volume = percent_to_volume(percent);
         if self.active() {
@@ -425,6 +559,13 @@ impl Engine {
     }
 
     pub fn set_shuffle(&self, shuffle: bool) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            crate::controller::set_shuffle(shuffle)?;
+            self.0.state.lock().unwrap().shuffling = shuffle;
+            self.notify();
+            return Ok(());
+        }
         let link = self.link()?;
         if self.active() {
             Self::send(link.spirc.shuffle(shuffle))?;
@@ -434,7 +575,12 @@ impl Engine {
     }
 
     /// Starts a playlist here, from `track` if given, honouring the shuffle switch.
-    pub fn play(&self, context: &str, track: Option<&str>) -> Result<(), String> {
+    pub async fn play(&self, context: &str, track: Option<&str>) -> Result<(), String> {
+        *self.0.last_request.lock().unwrap() = Some((context.to_string(), track.map(|t| t.to_string())));
+        #[cfg(target_os = "macos")]
+        if self.is_native_mode() {
+            return self.play_macos_native(context, track).await;
+        }
         let link = self.link()?;
         let context = playlist_id_of(context).map(|id| playlist_uri(&id)).ok_or("Playlist non valida.")?;
         let playing_track = match track {

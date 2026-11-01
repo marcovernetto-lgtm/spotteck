@@ -226,47 +226,71 @@
           </button>
         </div>
 
-        <div class="settings-section">
-          <div class="settings-label">Account Spotify</div>
-          <div class="profile-well">
-            <div class="profile-card">
-              <div id="profileAvatar" class="profile-avatar">S</div>
-              <div class="profile-info">
-                <div id="profileName" class="profile-name">Verifica connessione…</div>
-                <div id="profileSub" class="profile-sub">Spotify</div>
+        <div class="settings-tabs">
+          <button id="settingsTabSystem" class="settings-tab active" type="button">Sistema</button>
+          <button id="settingsTabPlaylists" class="settings-tab" type="button">Playlist</button>
+        </div>
+
+        <!-- Page 1: Sistema & Strumenti -->
+        <div id="settingsPageSystem" class="settings-page">
+          <div class="settings-section">
+            <div class="settings-label">Account Spotify</div>
+            <div class="profile-well">
+              <div class="profile-card">
+                <div id="profileAvatar" class="profile-avatar">S</div>
+                <div class="profile-info">
+                  <div id="profileName" class="profile-name">Verifica connessione…</div>
+                  <div id="profileSub" class="profile-sub">Spotify</div>
+                </div>
+                <span id="profileLed" class="led"></span>
               </div>
-              <span id="profileLed" class="led"></span>
+              <div class="profile-actions">
+                <button id="profileLoginBtn" class="key key-orange key-wide">Cambia Account</button>
+                <button id="profileLogoutBtn" class="key key-wide">Disconnetti</button>
+              </div>
+              <p id="spotifyStatus" class="settings-hint" role="status" aria-live="polite"></p>
+              <p id="playerHint" class="settings-hint">Spotteck suona come dispositivo Spotify Connect: lo trovi anche nel menu Dispositivi dell’app Spotify sul telefono. Uscita: predefinita del sistema.</p>
+              <p id="audioAnalysisStatus" class="settings-hint" role="status">Visualizzatori: in attesa dell’audio reale.</p>
             </div>
-            <div class="profile-actions">
-              <button id="profileLoginBtn" class="key key-orange key-wide">Cambia Account</button>
-              <button id="profileLogoutBtn" class="key key-wide">Disconnetti</button>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-label-row">
+              <span class="settings-label">Modalità Tutto Schermo</span>
             </div>
-            <p id="spotifyStatus" class="settings-hint" role="status" aria-live="polite"></p>
-            <p id="playerHint" class="settings-hint">Spotteck suona come dispositivo Spotify Connect: lo trovi anche nel menu Dispositivi dell’app Spotify sul telefono. Uscita: predefinita del sistema.</p>
-            <p id="audioAnalysisStatus" class="settings-hint" role="status">Visualizzatori: in attesa dell’audio reale.</p>
+            <div class="vis-checklist">
+              <div id="zenHideHudRow" class="vis-item checked">
+                <span>Nascondi tasti e nome canzone</span>
+                <div id="zenHideHudBox" class="vis-toggle">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-label-row">
+              <span class="settings-label">Strumenti nel Quadrante</span>
+              <button id="visSelectAll" class="drawer-link">Tutti attivi</button>
+            </div>
+            <div id="visChecklist" class="vis-checklist"></div>
           </div>
         </div>
 
-        <div class="settings-section">
-          <div class="settings-label-row">
-            <span class="settings-label">Modalità Tutto Schermo</span>
-          </div>
-          <div class="vis-checklist">
-            <div id="zenHideHudRow" class="vis-item checked">
-              <span>Nascondi tasti e nome canzone</span>
-              <div id="zenHideHudBox" class="vis-toggle">
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+        <!-- Page 2: Selezione Playlist -->
+        <div id="settingsPagePlaylists" class="settings-page hidden">
+          <div class="settings-section">
+            <div class="settings-label-row">
+              <span class="settings-label">Playlist Visibili</span>
+              <div class="settings-actions-group">
+                <button id="playlistShowAll" class="drawer-link" type="button">Tutte visibili</button>
+                <span class="settings-actions-sep">·</span>
+                <button id="playlistHideAll" class="drawer-link" type="button">Nascondi tutte</button>
               </div>
             </div>
+            <p class="settings-hint">Scegli quali playlist mostrare nella barra laterale di Spotteck.</p>
+            <div id="playlistChecklist" class="playlist-checklist"></div>
           </div>
-        </div>
-
-        <div class="settings-section">
-          <div class="settings-label-row">
-            <span class="settings-label">Strumenti nel Quadrante</span>
-            <button id="visSelectAll" class="drawer-link">Tutti attivi</button>
-          </div>
-          <div id="visChecklist" class="vis-checklist"></div>
         </div>
       </div>
     </div>

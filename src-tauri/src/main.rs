@@ -86,12 +86,21 @@ fn start_analyzer(app: AppHandle, tap: Arc<AudioTap>) {
     });
 }
 
-/// The renderer interpolates the position itself; a 1 s heartbeat keeps it honest.
+/// The renderer interpolates the position itself; a 500ms heartbeat keeps it honest.
 fn start_heartbeat(app: AppHandle, engine: Engine) {
     tauri::async_runtime::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        let mut tick = tokio::time::interval(Duration::from_millis(500));
         loop {
             tick.tick().await;
+            #[cfg(target_os = "macos")]
+            if engine.is_native_mode() {
+                // osascript blocks: keep it off the async workers.
+                let native = engine.clone();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    native.sync_macos_state();
+                })
+                .await;
+            }
             let payload = engine.payload();
             if payload.is_playing {
                 let _ = app.emit("spotify:state", &payload);
@@ -130,6 +139,9 @@ fn main() {
             start_heartbeat(handle.clone(), engine.clone());
             let starting = engine.clone();
             tauri::async_runtime::spawn(async move { starting.start() });
+
+            #[cfg(target_os = "macos")]
+            std::thread::spawn(spotteck_spotify::hide_spotify);
 
             app.manage(App { engine, pinned });
             Ok(())

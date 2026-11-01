@@ -20,9 +20,14 @@ const TAIL: Duration = Duration::from_millis(300);
 #[derive(Default)]
 pub struct AudioTap {
     fifo: Mutex<VecDeque<f32>>,
+    synthetic: std::sync::atomic::AtomicBool,
 }
 
 impl AudioTap {
+    pub fn set_synthetic_active(&self, active: bool) {
+        self.synthetic.store(active, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// `gain` is the soft volume applied to these samples; it is divided out so the
     /// instruments don't shrink with the volume slider.
     fn push(&self, samples: &[f64], gain: f64) {
@@ -53,6 +58,7 @@ impl AudioTap {
             .spawn(move || {
                 let mut analyzer = Analyzer::new();
                 let mut chunk = Vec::new();
+                let start_instant = Instant::now();
                 let mut last = Instant::now();
                 let mut last_audio: Option<Instant> = None;
                 loop {
@@ -63,16 +69,23 @@ impl AudioTap {
                     chunk.clear();
                     self.drain(frames, &mut chunk);
                     if chunk.is_empty() {
-                        match last_audio {
-                            Some(at) if now.duration_since(at) < TAIL => {
-                                analyzer.push_interleaved(&vec![0.0; frames.min(1024) * 2])
+                        if self.synthetic.load(std::sync::atomic::Ordering::Relaxed) {
+                            let t_start = now.duration_since(start_instant).as_secs_f64();
+                            chunk = synthetic_samples(t_start, frames);
+                            last_audio = Some(now);
+                            analyzer.push_interleaved(&chunk);
+                        } else {
+                            match last_audio {
+                                Some(at) if now.duration_since(at) < TAIL => {
+                                    analyzer.push_interleaved(&vec![0.0; frames.min(1024) * 2])
+                                }
+                                Some(_) => {
+                                    last_audio = None;
+                                    analyzer.clear();
+                                    continue;
+                                }
+                                None => continue,
                             }
-                            Some(_) => {
-                                last_audio = None;
-                                analyzer.clear();
-                                continue;
-                            }
-                            None => continue,
                         }
                     } else {
                         last_audio = Some(now);
@@ -83,6 +96,32 @@ impl AudioTap {
             })
             .expect("analyzer thread");
     }
+}
+
+fn synthetic_samples(t_start: f64, frames: usize) -> Vec<f32> {
+    let mut out = Vec::with_capacity(frames * 2);
+    let dt = 1.0 / f64::from(SAMPLE_RATE);
+    for i in 0..frames {
+        let t = t_start + (i as f64) * dt;
+        // 124 BPM (~2.06 Hz, 0.484s period)
+        let beat_t = t % 0.484;
+        let beat_decay = (-beat_t * 14.0).exp();
+        let kick_freq = 55.0 + 55.0 * beat_decay;
+        let kick = (2.0 * std::f64::consts::PI * kick_freq * t).sin() * beat_decay * 0.72;
+        let chord = (2.0 * std::f64::consts::PI * 220.0 * t).sin() * 0.22
+            + (2.0 * std::f64::consts::PI * 261.63 * t).sin() * 0.18
+            + (2.0 * std::f64::consts::PI * 329.63 * t).sin() * 0.18
+            + (2.0 * std::f64::consts::PI * 440.0 * t).sin() * 0.14;
+        let hat_t = (t + 0.242) % 0.484;
+        let hat_decay = (-hat_t * 30.0).exp();
+        let hat = ((2.0 * std::f64::consts::PI * 6800.0 * t).sin() + (2.0 * std::f64::consts::PI * 8400.0 * t).sin())
+            * 0.12
+            * hat_decay;
+        let s = ((kick + chord + hat) * 0.8).clamp(-1.0, 1.0) as f32;
+        out.push(s * 0.98);
+        out.push(s * 1.02);
+    }
+    out
 }
 
 /// The rodio sink with a copy of every packet going to the [`AudioTap`].

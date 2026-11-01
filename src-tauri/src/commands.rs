@@ -57,13 +57,13 @@ pub fn set_volume(app: State<'_, App>, volume: f64) -> Value {
 }
 
 #[tauri::command]
-pub fn play_uri(app: State<'_, App>, uri: String) -> Value {
-    reply(app.engine.play(&uri, None))
+pub async fn play_uri(app: State<'_, App>, uri: String) -> Result<Value, ()> {
+    Ok(reply(app.engine.play(&uri, None).await))
 }
 
 #[tauri::command]
-pub fn play_track_in_context(app: State<'_, App>, track: String, context: String) -> Value {
-    reply(app.engine.play(&context, Some(&track)))
+pub async fn play_track_in_context(app: State<'_, App>, track: String, context: String) -> Result<Value, ()> {
+    Ok(reply(app.engine.play(&context, Some(&track)).await))
 }
 
 #[tauri::command]

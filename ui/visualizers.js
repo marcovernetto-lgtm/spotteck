@@ -980,34 +980,127 @@ function drawVinyl(canvas, s) {
   ctx.stroke();
   ctx.restore();
 
-  // Rear counterweight shaft & heavy brushed steel counterweight cylinder
-  const backX = pivotX - Math.cos(bendAngle) * (R * 0.27);
-  const backY = pivotY - Math.sin(bendAngle) * (R * 0.27);
-  ctx.strokeStyle = '#8E8A82';
-  ctx.lineWidth = 3.1 * u;
+  // Rear tonearm stub direction (coaxial with pivot, opposite to tonearm wand)
+  const rearAngle = bendAngle + Math.PI;
+  const rearLen = R * 0.30;
+  const backX = pivotX + Math.cos(rearAngle) * rearLen;
+  const backY = pivotY + Math.sin(rearAngle) * rearLen;
+
+  // Counterweight position: centered directly ON the rear shaft
+  const cwDist = rearLen * 0.54;
+  const cwX = pivotX + Math.cos(rearAngle) * cwDist;
+  const cwY = pivotY + Math.sin(rearAngle) * cwDist;
+
+  // Soft cast shadow of rear shaft and counterweight on deck plate
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.filter = `blur(${Math.max(1.2, 2.2 * u)}px)`;
+  ctx.beginPath();
+  ctx.ellipse(cwX + 2.5 * u, cwY + 4.5 * u, 7.5 * u, 5.5 * u, rearAngle, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+
+  // Rear tubular aluminum tonearm shaft (base tube + highlights)
+  ctx.strokeStyle = '#6E6A63';
+  ctx.lineWidth = 3.6 * u;
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(pivotX, pivotY);
   ctx.lineTo(backX, backY);
   ctx.stroke();
 
-  ctx.save();
-  ctx.translate((pivotX + backX) * 0.52, (pivotY + backY) * 0.52);
-  ctx.rotate(bendAngle);
-  const cwGrad = ctx.createLinearGradient(0, -5.6 * u, 0, 5.6 * u);
-  cwGrad.addColorStop(0, '#5E5B55');
-  cwGrad.addColorStop(0.35, '#D4CFC5');
-  cwGrad.addColorStop(0.7, '#3E3C38');
-  cwGrad.addColorStop(1, '#1A1917');
-  ctx.fillStyle = cwGrad;
+  ctx.strokeStyle = '#D8D3C8';
+  ctx.lineWidth = 2.0 * u;
   ctx.beginPath();
-  ctx.roundRect(-7 * u, -5.6 * u, 14 * u, 11.2 * u, 1.8 * u);
-  ctx.fill();
-  ctx.fillStyle = '#121110';
-  ctx.fillRect(2.5 * u, -5.6 * u, 3.5 * u, 11.2 * u);
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.moveTo(pivotX, pivotY);
+  ctx.lineTo(backX, backY);
+  ctx.stroke();
+
+  ctx.strokeStyle = '#FFFFFF';
   ctx.lineWidth = Math.max(0.5, 0.7 * u);
-  ctx.strokeRect(-7 * u, -5.6 * u, 14 * u, 11.2 * u);
+  ctx.beginPath();
+  ctx.moveTo(pivotX - 0.35 * u, pivotY - 0.35 * u);
+  ctx.lineTo(backX - 0.35 * u, backY - 0.35 * u);
+  ctx.stroke();
+
+  // Coaxial counterweight assembly (perfectly threaded onto the rear shaft)
+  ctx.save();
+  ctx.translate(cwX, cwY);
+  ctx.rotate(rearAngle);
+
+  const cwR = 6.2 * u; // radius across the shaft (diameter = 12.4 * u)
+  const cwFrontX = -5.6 * u; // front edge towards pivot
+  const cwDialW = 3.6 * u;   // tracking force dial width
+  const cwBodyX = cwFrontX + cwDialW; // -2.0 * u
+  const cwBodyW = 7.6 * u;   // main steel body width
+
+  // A. Front tracking force dial (ghiera numerata nero opaco)
+  const dialGrad = ctx.createLinearGradient(0, -cwR * 0.95, 0, cwR * 0.95);
+  dialGrad.addColorStop(0, '#363430');
+  dialGrad.addColorStop(0.35, '#22201D');
+  dialGrad.addColorStop(0.7, '#151412');
+  dialGrad.addColorStop(1, '#0C0B0A');
+  ctx.fillStyle = dialGrad;
+  ctx.beginPath();
+  ctx.roundRect(cwFrontX, -cwR * 0.92, cwDialW, cwR * 1.84, [1.5 * u, 0, 0, 1.5 * u]);
+  ctx.fill();
+
+  // Dial gram calibration ticks
+  ctx.strokeStyle = 'rgba(235, 230, 220, 0.45)';
+  ctx.lineWidth = Math.max(0.5, 0.65 * u);
+  for (let k = -2; k <= 2; k++) {
+    const tickY = (k / 3) * (cwR * 0.82);
+    ctx.beginPath();
+    ctx.moveTo(cwFrontX + 0.6 * u, tickY);
+    ctx.lineTo(cwFrontX + (k === 0 ? 2.4 : 1.5) * u, tickY);
+    ctx.stroke();
+  }
+
+  // Dial-to-body groove separator
+  ctx.strokeStyle = '#0E0D0C';
+  ctx.lineWidth = 0.8 * u;
+  ctx.beginPath();
+  ctx.moveTo(cwBodyX, -cwR);
+  ctx.lineTo(cwBodyX, cwR);
+  ctx.stroke();
+
+  // B. Main turned stainless steel / heavy aluminum cylinder body
+  const bodyGrad = ctx.createLinearGradient(0, -cwR, 0, cwR);
+  bodyGrad.addColorStop(0, '#55514B');
+  bodyGrad.addColorStop(0.18, '#88837A');
+  bodyGrad.addColorStop(0.36, '#EAE6DC'); // bright metallic top specular crest
+  bodyGrad.addColorStop(0.60, '#666159');
+  bodyGrad.addColorStop(0.85, '#2B2925');
+  bodyGrad.addColorStop(1, '#161514');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.roundRect(cwBodyX, -cwR, cwBodyW, cwR * 2, [0, 2.2 * u, 2.2 * u, 0]);
+  ctx.fill();
+
+  // Subtle knurled rubber grip ring / damper groove
+  ctx.fillStyle = '#161514';
+  ctx.fillRect(cwBodyX + 2.8 * u, -cwR, 1.6 * u, cwR * 2);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  ctx.lineWidth = Math.max(0.4, 0.5 * u);
+  ctx.strokeRect(cwBodyX + 2.8 * u, -cwR, 1.6 * u, cwR * 2);
+
+  // Bevel & rim specular highlights on the counterweight
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+  ctx.lineWidth = Math.max(0.5, 0.7 * u);
+  ctx.beginPath();
+  ctx.roundRect(cwBodyX, -cwR, cwBodyW, cwR * 2, [0, 2.2 * u, 2.2 * u, 0]);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // Machined metallic end-cap on the rear shaft tip
+  ctx.save();
+  ctx.translate(backX, backY);
+  ctx.rotate(rearAngle);
+  ctx.fillStyle = '#D4CFC5';
+  ctx.beginPath();
+  ctx.arc(0, 0, 1.9 * u, -Math.PI / 2, Math.PI / 2);
+  ctx.fill();
   ctx.restore();
 
   // Main tubular aluminum tonearm shaft (base layer + specular crest)

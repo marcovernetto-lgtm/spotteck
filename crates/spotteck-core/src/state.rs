@@ -149,7 +149,7 @@ impl PlayerState {
         *self = PlayerState { readiness, ..PlayerState::default() };
     }
 
-    fn set_position(&mut self, position_ms: u32, now: Instant) {
+    pub fn set_position(&mut self, position_ms: u32, now: Instant) {
         self.position_ms = position_ms;
         self.position_at = Some(now);
     }

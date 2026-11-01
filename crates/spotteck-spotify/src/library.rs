@@ -159,6 +159,45 @@ impl Library {
         self.cache.lock().unwrap().tracks.insert(key, (Instant::now(), tracks.clone()));
         Ok(tracks)
     }
+
+    /// Resolves the starting track URI of a playlist (first track, or a pseudo-random one
+    /// when `shuffle` is active) so `Spotify.app` can be given `play track X in context Y`
+    /// directly without triggering its ~0.5s context-resume restart.
+    pub(crate) async fn entry_track(&self, session: &Session, id: &str, shuffle: bool) -> Option<String> {
+        let uri = playlist_spotify_uri(id).ok()?;
+        let key = playlist_id_of(id)?;
+        if let Some(tracks) = fresh(self.cache.lock().unwrap().tracks.get(&key), TRACKS_TTL) {
+            let playable: Vec<&TrackEntry> = tracks.iter().filter(|t| t.playable).collect();
+            if !playable.is_empty() {
+                let idx = if shuffle {
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.subsec_nanos() as usize)
+                        .unwrap_or(0);
+                    nanos % playable.len()
+                } else {
+                    0
+                };
+                return Some(playable[idx].uri.clone());
+            }
+        }
+        let playlist = Playlist::get(session, &uri).await.ok()?;
+        let uris: Vec<SpotifyUri> =
+            playlist.tracks().filter(|t| matches!(t, SpotifyUri::Track { .. })).take(MAX_TRACKS).cloned().collect();
+        if uris.is_empty() {
+            return None;
+        }
+        let idx = if shuffle {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as usize)
+                .unwrap_or(0);
+            nanos % uris.len()
+        } else {
+            0
+        };
+        uris[idx].to_uri().ok()
+    }
 }
 
 #[cfg(test)]

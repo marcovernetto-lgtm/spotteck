@@ -22,14 +22,23 @@
     { id: 'aetherAura',  viewId: 'aetherAuraView',  label: 'Aether Aura (Tutto Schermo)' }
   ];
 
-  // Load enabled visualizers from localStorage
+  // Load enabled visualizers from localStorage (auto-enabling newly introduced visualizers)
   let enabledModeIds = new Set(MODES.map((m) => m.id));
   try {
     const savedModes = JSON.parse(localStorage.getItem('spotteck_enabled_modes') || 'null');
+    const knownModes = JSON.parse(localStorage.getItem('spotteck_known_modes') || '[]');
     if (Array.isArray(savedModes) && savedModes.length > 0) {
       const valid = savedModes.filter((id) => MODES.some((m) => m.id === id));
-      if (valid.length > 0) enabledModeIds = new Set(valid);
+      if (valid.length > 0) {
+        enabledModeIds = new Set(valid);
+        MODES.forEach((m) => {
+          if (!Array.isArray(knownModes) || !knownModes.includes(m.id)) {
+            enabledModeIds.add(m.id);
+          }
+        });
+      }
     }
+    localStorage.setItem('spotteck_known_modes', JSON.stringify(MODES.map((m) => m.id)));
   } catch (_e) {}
 
   function saveEnabledModes() {
@@ -38,8 +47,73 @@
     } catch (_e) {}
   }
 
+  function playlistIdOf(input) {
+    if (!input) return null;
+    const m = String(input).match(/playlist[/:]([A-Za-z0-9]+)/);
+    if (m) return m[1];
+    return String(input).split('?')[0].split('#')[0].split(':').pop().trim();
+  }
+
+  function isSamePlaylist(a, b) {
+    if (!a || !b) return false;
+    const idA = playlistIdOf(a);
+    const idB = playlistIdOf(b);
+    return !!(idA && idB && idA === idB);
+  }
+
+  // Load hidden playlists from localStorage
+  let hiddenPlaylistIds = new Set();
+  try {
+    const savedHidden = JSON.parse(localStorage.getItem('spotteck_hidden_playlists') || '[]');
+    if (Array.isArray(savedHidden)) {
+      hiddenPlaylistIds = new Set(savedHidden);
+    }
+  } catch (_e) {}
+
+  function saveHiddenPlaylists() {
+    try {
+      localStorage.setItem('spotteck_hidden_playlists', JSON.stringify(Array.from(hiddenPlaylistIds)));
+    } catch (_e) {}
+  }
+
+  // Custom playlist order from localStorage
+  let customPlaylistOrder = [];
+  try {
+    const savedOrder = JSON.parse(localStorage.getItem('spotteck_playlist_order') || '[]');
+    if (Array.isArray(savedOrder)) {
+      customPlaylistOrder = savedOrder;
+    }
+  } catch (_e) {}
+
+  function savePlaylistOrder() {
+    try {
+      customPlaylistOrder = playlists.map((p) => p.id);
+      localStorage.setItem('spotteck_playlist_order', JSON.stringify(customPlaylistOrder));
+    } catch (_e) {}
+  }
+
+  function applyCustomPlaylistOrder(list) {
+    if (!Array.isArray(list) || list.length <= 1) return list;
+    if (!customPlaylistOrder || customPlaylistOrder.length === 0) return list;
+
+    const orderMap = new Map();
+    customPlaylistOrder.forEach((id, idx) => {
+      const clean = playlistIdOf(id) || String(id);
+      orderMap.set(clean, idx);
+      orderMap.set(String(id), idx);
+    });
+
+    return [...list].sort((a, b) => {
+      const keyA = playlistIdOf(a.id) || String(a.id);
+      const keyB = playlistIdOf(b.id) || String(b.id);
+      const posA = orderMap.has(keyA) ? orderMap.get(keyA) : (orderMap.has(String(a.id)) ? orderMap.get(String(a.id)) : 999999);
+      const posB = orderMap.has(keyB) ? orderMap.get(keyB) : (orderMap.has(String(b.id)) ? orderMap.get(String(b.id)) : 999999);
+      return posA - posB;
+    });
+  }
+
   let modeIndex = 0;
-  // Independent preset index per Blob mode (all start on Preset 0: Arancione Braun by default)
+  // Independent preset index per Blob / Anadol mode
   const blobPresetIndices = {
     aetherBlob: 0,
     aetherMacro: 0,
@@ -112,6 +186,13 @@
 
   const settingsModal = document.getElementById('settingsModal');
   const settingsClose = document.getElementById('settingsClose');
+  const settingsTabSystem = document.getElementById('settingsTabSystem');
+  const settingsTabPlaylists = document.getElementById('settingsTabPlaylists');
+  const settingsPageSystem = document.getElementById('settingsPageSystem');
+  const settingsPagePlaylists = document.getElementById('settingsPagePlaylists');
+  const playlistChecklist = document.getElementById('playlistChecklist');
+  const playlistShowAll = document.getElementById('playlistShowAll');
+  const playlistHideAll = document.getElementById('playlistHideAll');
   const profileAvatar = document.getElementById('profileAvatar');
   const profileName = document.getElementById('profileName');
   const profileSub = document.getElementById('profileSub');
@@ -443,16 +524,17 @@
     setMode(modeIndex + 1);
   });
 
-  // Right-Click on Stage: Cycle Aether-Morph Preset ONLY for the currently active Blob visualizer
+  // Right-Click on Stage: Cycle Preset for Blob or Refik Anadol visualizers
   stage.addEventListener('contextmenu', (e) => {
     const activeId = MODES[modeIndex].id;
-    if (!isBlobMode(activeId)) return;
-    e.preventDefault();
-    const curIdx = blobPresetIndices[activeId] || 0;
-    const nextIdx = (curIdx + 1) % AETHER_PRESETS.length;
-    blobPresetIndices[activeId] = nextIdx;
-    const p = AETHER_PRESETS[nextIdx];
-    if (p) showToast(`Preset: ${p.name}`);
+    if (isBlobMode(activeId)) {
+      e.preventDefault();
+      const curIdx = blobPresetIndices[activeId] || 0;
+      const nextIdx = (curIdx + 1) % AETHER_PRESETS.length;
+      blobPresetIndices[activeId] = nextIdx;
+      const p = AETHER_PRESETS[nextIdx];
+      if (p) showToast(`Preset: ${p.name}`);
+    }
   });
 
   // Ensure initial mode is one of the enabled modes
@@ -547,9 +629,164 @@
     } catch (_e) {}
   }
 
+  function switchSettingsTab(tab) {
+    if (tab === 'playlists') {
+      settingsTabSystem?.classList.remove('active');
+      settingsTabPlaylists?.classList.add('active');
+      settingsPageSystem?.classList.add('hidden');
+      settingsPagePlaylists?.classList.remove('hidden');
+      renderPlaylistChecklist();
+    } else {
+      settingsTabPlaylists?.classList.remove('active');
+      settingsTabSystem?.classList.add('active');
+      settingsPagePlaylists?.classList.add('hidden');
+      settingsPageSystem?.classList.remove('hidden');
+      renderVisChecklist();
+    }
+  }
+
+  settingsTabSystem?.addEventListener('click', () => switchSettingsTab('system'));
+  settingsTabPlaylists?.addEventListener('click', () => switchSettingsTab('playlists'));
+
+  let draggedPlaylistIndex = null;
+  let draggedTileId = null;
+  let hasDraggedRecently = false;
+
+  function renderPlaylistChecklist() {
+    if (!playlistChecklist) return;
+    playlistChecklist.innerHTML = '';
+
+    if (!Array.isArray(playlists) || playlists.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'playlist-empty-hint';
+      empty.textContent = 'Nessuna playlist presente in libreria.';
+      playlistChecklist.appendChild(empty);
+      return;
+    }
+
+    playlists.forEach((p, index) => {
+      const isVisible = !hiddenPlaylistIds.has(p.id);
+      const row = document.createElement('div');
+      row.className = 'playlist-item' + (isVisible ? ' checked' : '');
+      row.draggable = true;
+      row.dataset.index = index;
+
+      const handle = document.createElement('span');
+      handle.className = 'playlist-drag-handle';
+      handle.title = 'Trascina per riordinare';
+      handle.innerHTML = '<svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="6" cy="2" r="1.1"/><circle cx="2" cy="6" r="1.1"/><circle cx="6" cy="6" r="1.1"/><circle cx="2" cy="10" r="1.1"/><circle cx="6" cy="10" r="1.1"/></svg>';
+
+      const meta = document.createElement('div');
+      meta.className = 'playlist-item-meta';
+
+      if (p.image) {
+        const thumb = document.createElement('img');
+        thumb.className = 'playlist-item-thumb';
+        thumb.src = p.image;
+        thumb.alt = '';
+        thumb.loading = 'lazy';
+        thumb.onerror = () => { thumb.style.display = 'none'; };
+        meta.appendChild(thumb);
+      } else {
+        const ph = document.createElement('div');
+        ph.className = 'playlist-item-thumb-placeholder';
+        ph.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+        meta.appendChild(ph);
+      }
+
+      const name = document.createElement('span');
+      name.className = 'playlist-item-name';
+      name.textContent = p.name || 'Playlist';
+      meta.appendChild(name);
+
+      const toggle = document.createElement('div');
+      toggle.className = 'vis-toggle';
+      if (isVisible) {
+        toggle.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+      }
+
+      row.appendChild(handle);
+      row.appendChild(meta);
+      row.appendChild(toggle);
+
+      // Drag and drop handlers for reordering playlists
+      row.addEventListener('dragstart', (e) => {
+        draggedPlaylistIndex = index;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(index));
+        setTimeout(() => row.classList.add('dragging'), 0);
+      });
+
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (draggedPlaylistIndex === null || draggedPlaylistIndex === index) return;
+        if (draggedPlaylistIndex < index) {
+          row.classList.add('drag-over-bottom');
+          row.classList.remove('drag-over-top');
+        } else {
+          row.classList.add('drag-over-top');
+          row.classList.remove('drag-over-bottom');
+        }
+      });
+
+      row.addEventListener('dragleave', () => {
+        row.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        row.classList.remove('drag-over-top', 'drag-over-bottom');
+        if (draggedPlaylistIndex === null || draggedPlaylistIndex === index) return;
+
+        const [movedItem] = playlists.splice(draggedPlaylistIndex, 1);
+        playlists.splice(index, 0, movedItem);
+        savePlaylistOrder();
+        renderPlaylistChecklist();
+        renderPlaylists();
+      });
+
+      row.addEventListener('dragend', () => {
+        draggedPlaylistIndex = null;
+        row.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom');
+        hasDraggedRecently = true;
+        setTimeout(() => { hasDraggedRecently = false; }, 80);
+      });
+
+      row.addEventListener('click', () => {
+        if (hasDraggedRecently) return;
+        if (hiddenPlaylistIds.has(p.id)) {
+          hiddenPlaylistIds.delete(p.id);
+        } else {
+          hiddenPlaylistIds.add(p.id);
+        }
+        saveHiddenPlaylists();
+        renderPlaylistChecklist();
+        renderPlaylists();
+      });
+
+      playlistChecklist.appendChild(row);
+    });
+  }
+
+  playlistShowAll?.addEventListener('click', () => {
+    hiddenPlaylistIds.clear();
+    saveHiddenPlaylists();
+    renderPlaylistChecklist();
+    renderPlaylists();
+  });
+
+  playlistHideAll?.addEventListener('click', () => {
+    playlists.forEach((p) => hiddenPlaylistIds.add(p.id));
+    saveHiddenPlaylists();
+    renderPlaylistChecklist();
+    renderPlaylists();
+  });
+
   if (settingsBtn && settingsModal) {
     settingsBtn.addEventListener('click', () => {
       renderVisChecklist();
+      renderPlaylistChecklist();
       refreshProfileUI();
       settingsModal.classList.add('open');
     });
@@ -610,20 +847,6 @@
     return !!(idA && idB && idA === idB);
   }
 
-  function playlistIdOf(input) {
-    if (!input) return null;
-    const m = String(input).match(/playlist[/:]([A-Za-z0-9]+)/);
-    if (m) return m[1];
-    return String(input).split('?')[0].split('#')[0].split(':').pop().trim();
-  }
-
-  function isSamePlaylist(a, b) {
-    if (!a || !b) return false;
-    const idA = playlistIdOf(a);
-    const idB = playlistIdOf(b);
-    return !!(idA && idB && idA === idB);
-  }
-
   function updatePlaylistActiveState() {
     if (!playlistGrid) return;
     playlistGrid.querySelectorAll('.tile').forEach((btn) => {
@@ -657,7 +880,8 @@
 
   function renderPlaylists() {
     playlistGrid.innerHTML = '';
-    playlists.forEach((p) => {
+    const visiblePlaylists = playlists.filter((p) => !hiddenPlaylistIds.has(p.id));
+    visiblePlaylists.forEach((p) => {
       const isActive = isSamePlaylist(player.activePlaylistId, p.id);
       const btn = document.createElement('button');
       btn.className = 'tile' + (isActive ? ' active' : '');
@@ -675,8 +899,53 @@
       btn.appendChild(img);
       btn.appendChild(pin);
 
+      btn.draggable = true;
+
+      // Drag and drop for grid tiles
+      btn.addEventListener('dragstart', (e) => {
+        draggedTileId = p.id;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', p.id);
+        setTimeout(() => btn.classList.add('tile-dragging'), 0);
+      });
+
+      btn.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (!draggedTileId || isSamePlaylist(draggedTileId, p.id)) return;
+        btn.classList.add('tile-drag-over');
+      });
+
+      btn.addEventListener('dragleave', () => {
+        btn.classList.remove('tile-drag-over');
+      });
+
+      btn.addEventListener('drop', (e) => {
+        e.preventDefault();
+        btn.classList.remove('tile-drag-over');
+        if (!draggedTileId || isSamePlaylist(draggedTileId, p.id)) return;
+
+        const fromIndex = playlists.findIndex((item) => isSamePlaylist(item.id, draggedTileId));
+        const toIndex = playlists.findIndex((item) => isSamePlaylist(item.id, p.id));
+        if (fromIndex !== -1 && toIndex !== -1 && fromIndex !== toIndex) {
+          const [movedItem] = playlists.splice(fromIndex, 1);
+          playlists.splice(toIndex, 0, movedItem);
+          savePlaylistOrder();
+          renderPlaylists();
+          renderPlaylistChecklist();
+        }
+      });
+
+      btn.addEventListener('dragend', () => {
+        draggedTileId = null;
+        btn.classList.remove('tile-dragging', 'tile-drag-over');
+        hasDraggedRecently = true;
+        setTimeout(() => { hasDraggedRecently = false; }, 80);
+      });
+
       // Left-click: Play playlist immediately in background
       btn.addEventListener('click', async () => {
+        if (hasDraggedRecently) return;
         player.activePlaylistId = p.id;
         updatePlaylistActiveState();
         reportControl(await window.spotteck.playUri(p.id));
@@ -782,12 +1051,13 @@
 
   drawerRemove.addEventListener('click', async () => {
     if (!drawerPlaylist) return;
-    try { playlists = await window.spotteck.removePlaylist(drawerPlaylist.id); }
+    try { playlists = applyCustomPlaylistOrder(await window.spotteck.removePlaylist(drawerPlaylist.id)); }
     catch (_) { drawerTitle.textContent = 'Rimozione non salvata: riprova.'; return; }
     if (player.activePlaylistId === drawerPlaylist.id) player.activePlaylistId = null;
     drawer.classList.remove('open');
     drawerPlaylist = null;
     renderPlaylists();
+    renderPlaylistChecklist();
   });
 
   // Add Playlist Modal
@@ -809,8 +1079,9 @@
       addError.textContent = (res && res.error) || 'Link non valido';
       return;
     }
-    playlists = res.all;
+    playlists = applyCustomPlaylistOrder(res.all);
     renderPlaylists();
+    renderPlaylistChecklist();
     addModal.classList.remove('open');
   }
 
@@ -1001,8 +1272,9 @@
     try {
       const loaded = await bridge.getPlaylists();
       if (Array.isArray(loaded)) {
-        playlists = loaded;
+        playlists = applyCustomPlaylistOrder(loaded);
         renderPlaylists();
+        renderPlaylistChecklist();
       }
     } catch (e) {
       addError.textContent = e.message || 'Archivio playlist non disponibile.';
@@ -1254,6 +1526,9 @@
     const sharedState = {
       isPlaying: player.isPlaying,
       progress,
+      trackKey: player.trackUri || player.track || '',
+      trackTitle: player.track || '',
+      trackArtist: player.artist || '',
       angleL,
       angleR,
       spinAngle: vinylSpin,
